@@ -96,26 +96,54 @@ body {
   gap: 0;
 }
 
-/* O palco tem a forma do vídeo (posta em linha pelo render) e fica centrado na
-   área disponível. As sobras viram fundo da grade, não um retângulo preto com
-   borda verde em volta de nada. */
+/* A célula do palco vira uma unidade de medida.
+
+   É o que permite a regra seguinte perguntar "quanta altura existe aqui?" de
+   dentro de uma declaração de largura. Sem esta camada não há como fazer a
+   pergunta: o CSS resolve largura antes de altura, e quem só tem `max-height`
+   descobre tarde demais que não coube. */
+.palco-slot {
+  container-type: size;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* A maior caixa com a forma do vídeo que cabe na célula.
+
+   `width: 100%` com `max-height: 100%` parecia fazer isso e não fazia: quando a
+   altura estourava, o navegador cortava a altura e MANTINHA a largura. A caixa
+   ficava mais larga que o vídeo, e o `object-fit: contain` do canvas preenchia a
+   diferença com preto nas laterais — inclusive em tela cheia, onde ela era
+   justamente o que se queria eliminar.
+
+   `min()` escolhe o eixo apertado antes de desenhar, então a caixa nasce com a
+   forma certa e o preto só sobra fora dela, onde é fundo e não moldura vazia.
+
+   As duas declarações de `width` são de propósito: navegador sem unidade de
+   container ignora a segunda e fica com o comportamento antigo. */
 .tile-palco[style*='aspect-ratio'] {
   place-self: center;
   width: 100%;
   height: auto;
   max-width: 100%;
   max-height: 100%;
+  width: min(100cqw, calc(100cqh * var(--ar, 1.7778)));
 }
 
-/* Tela cheia: só o palco. A barra de controles fica, senão não haveria saída
-   visível — sair por tecla é atalho, não é caminho. */
+/* Tela cheia: só o palco. */
 .grid.palco.cheia {
   grid-template-columns: minmax(0, 1fr);
   padding: 0;
 }
 
+/* Sem canto nem borda: a moldura verde de "alguém transmitindo" contornaria a
+   única coisa na tela, e os 2px dela sairiam do vídeo — que é justamente o que
+   se pediu para encostar na borda. */
 .grid.palco.cheia .tile {
   border-radius: 0;
+  border-width: 0;
 }
 
 .sidebar {
@@ -635,10 +663,9 @@ button {
 
 /* As barras ocupam espaço no layout em vez de flutuar sobre o vídeo.
 
-   A versão anterior as deixava sobrepostas e as escondia sozinha depois de uns
-   segundos parada — o sumiço existia só para desobstruir a tela. Ocupando
-   lugar, elas não obstruem nada, e some junto o comportamento de aparecer e
-   desaparecer debaixo do cursor. */
+   Ocupando lugar elas não obstruem nada, e não precisam do vaivém de aparecer e
+   sumir debaixo do cursor. A tela cheia é a única exceção, e lá o vaivém volta
+   junto com a sobreposição — ver "tela cheia", mais abaixo. */
 .topbar {
   flex: 0 0 auto;
   display: flex;
@@ -654,6 +681,76 @@ button {
   align-items: center;
   gap: 10px;
   padding: 0 16px 16px;
+}
+
+/* ------------------------------------------------------------- tela cheia */
+
+/* O #app é o elemento pedido à API de tela cheia — e não o documento — porque
+   modais e avisos vivem dentro dele: fora do elemento promovido o navegador
+   simplesmente não os desenha. Fundo explícito porque ele não herda o do body. */
+#app:fullscreen {
+  background: var(--bg);
+}
+
+/* Em tela cheia as barras voltam a flutuar sobre a imagem.
+
+   É a exceção que a regra acima admite: ocupar lugar é o certo enquanto a tela
+   divide o espaço com a sala, mas em tela cheia uma faixa de controles roubando
+   altura é justamente o que "tela cheia" prometeu não fazer. */
+#app.cheia .topbar,
+#app.cheia .bottombar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  /* A faixa inteira não pode capturar clique: fora dos controles ela é imagem,
+     e o clique ali é o que alterna a tela cheia. */
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#app.cheia .topbar > *,
+#app.cheia .bottombar > * {
+  pointer-events: auto;
+}
+
+/* Degradê curto atrás das barras: sobre uma cena clara a pílula escura ainda é
+   legível, mas a borda dela some. */
+#app.cheia .topbar {
+  top: 0;
+  padding-bottom: 28px;
+  background: linear-gradient(rgba(0, 0, 0, 0.45), transparent);
+}
+
+#app.cheia .bottombar {
+  bottom: 0;
+  padding-top: 32px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.5));
+}
+
+/* Parado, o cursor também é obstrução: some junto com o que ele não está
+   usando. */
+#app.cheia.ocioso {
+  cursor: none;
+}
+
+#app.cheia.ocioso .topbar {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+#app.cheia.ocioso .bottombar {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* Invisível não recebe clique — nem o hover que as manteria escondidas para
+   sempre por parecerem em uso. Voltar é com o primeiro movimento do cursor. */
+#app.cheia.ocioso .topbar,
+#app.cheia.ocioso .bottombar,
+#app.cheia.ocioso .topbar > *,
+#app.cheia.ocioso .bottombar > * {
+  pointer-events: none;
 }
 
 /* Sem nada visível dentro, a barra vira uma faixa vazia — é o que sobra no
