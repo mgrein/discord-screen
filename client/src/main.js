@@ -253,7 +253,7 @@ function renderGrid() {
 
   if (!casters.length) {
     activeSlot = null;
-    telaCheia = false;
+    limparTelaCheia();
   } else if (activeSlot === null || !available.has(activeSlot)) {
     // Sempre há uma tela em destaque quando existe transmissão: chegar numa
     // sala com tela no ar e ver só avatares esconderia o que importa.
@@ -302,7 +302,12 @@ function renderGrid() {
   // O slot em destaque, e não o da pessoa: cada transmissão tem um nó de canvas
   // só, então montar o palco com o slot errado o arranca do tile que o estava
   // mostrando — e um dos dois fica preto, conforme a ordem do desenho.
-  grid.append(buildTile(emCena, { palco: true, slot: activeSlot }).el);
+  // O palco vai dentro de uma célula própria porque é ela que dá ao CSS a
+  // medida da altura disponível — ver `.palco-slot`.
+  const cela = document.createElement('div');
+  cela.className = 'palco-slot';
+  cela.append(buildTile(emCena, { palco: true, slot: activeSlot }).el);
+  grid.append(cela);
 
   if (telaCheia) return;
 
@@ -395,6 +400,9 @@ function buildTile(p, { palco = false, semVideo = false, slot: slotDado = null }
   // na altura e sobrava um retângulo preto ocupando metade da área.
   if (palco && stream?.canvas.width) {
     tile.style.aspectRatio = `${stream.canvas.width} / ${stream.canvas.height}`;
+    // A mesma proporção como número: `aspect-ratio` não entra numa conta, e é
+    // de uma conta que sai a largura que cabe nos dois eixos.
+    tile.style.setProperty('--ar', String(stream.canvas.width / stream.canvas.height));
   }
 
   // Sem rótulo, dois tiles da mesma pessoa lado a lado no grid não se
@@ -407,8 +415,8 @@ function buildTile(p, { palco = false, semVideo = false, slot: slotDado = null }
   }
 
   const aoClicar = () => {
-    if (palco) telaCheia = !telaCheia;
-    else activeSlot = slot;
+    if (palco) return setTelaCheia(!telaCheia);
+    activeSlot = slot;
     renderGrid();
   };
 
@@ -1104,7 +1112,7 @@ function limparSala() {
   participants = [];
   lastRoomState = null;
   activeSlot = null;
-  telaCheia = false;
+  limparTelaCheia();
 
   if (roomInfo) remove(`sala:${roomInfo.id}`);
   roomTokens = null;
@@ -2125,12 +2133,83 @@ window.addEventListener('mousemove', acordarBarras);
 window.addEventListener('pointerdown', acordarBarras);
 acordarBarras();
 
+/**
+ * Tela cheia em dois níveis, e os dois valem ao mesmo tempo.
+ *
+ * O de dentro é o layout: a lateral sai e as barras passam a flutuar sobre a
+ * imagem. É ele que funciona em qualquer lugar.
+ *
+ * O de fora é a tela cheia do navegador. Sem ela sobra a janela em volta — aba,
+ * barra de endereço, barra de tarefas —, e nada disso tem a proporção do vídeo:
+ * o que não é a forma da imagem vira preto nas laterais.
+ */
+function setTelaCheia(valor) {
+  telaCheia = valor;
+  pedirTelaCheiaNativa(valor);
+  renderGrid();
+}
+
+/** Desliga os dois níveis. Para quem chega por fora do botão: sair da sala, a transmissão acabar. */
+function limparTelaCheia() {
+  telaCheia = false;
+  pedirTelaCheiaNativa(false);
+}
+
+/**
+ * A chamada precisa nascer de um gesto — por isso mora no caminho do clique.
+ *
+ * O que ela não pode é falhar calada: quem vê a borda preta continuar ali
+ * conclui que o modo está quebrado, quando o que faltou foi uma permissão.
+ */
+function pedirTelaCheiaNativa(entrar) {
+  const alvo = $('app');
+
+  if (!entrar) {
+    const sair = document.exitFullscreen ?? document.webkitExitFullscreen;
+    if (document.fullscreenElement && sair) Promise.resolve(sair.call(document)).catch(() => {});
+    return;
+  }
+
+  if (document.fullscreenElement) return;
+
+  const pedir = alvo.requestFullscreen ?? alvo.webkitRequestFullscreen;
+  if (!pedir) return avisarSemTelaCheia();
+
+  try {
+    Promise.resolve(pedir.call(alvo)).catch(avisarSemTelaCheia);
+  } catch {
+    avisarSemTelaCheia();
+  }
+}
+
+/**
+ * Dentro da Activity a recusa é esperada: o iframe não recebe a permissão
+ * `fullscreen`, e mesmo que recebesse a área seria a do painel do Discord, com
+ * a interface dele em volta. Lá o modo em layout é o teto do que dá para fazer,
+ * e avisar seria reclamar de algo que ninguém pode resolver. Fora dela é um
+ * bloqueio de verdade, e o F11 é a saída que não dá para adivinhar.
+ */
+let avisouTelaCheia = false;
+function avisarSemTelaCheia() {
+  if (inDiscord || avisouTelaCheia) return;
+  avisouTelaCheia = true;
+  toast('O navegador recusou a tela cheia. Aperte F11 para a imagem encostar nas bordas.');
+}
+
+// F11 e o Esc do próprio navegador saem sem passar pelo botão. Sem escutar
+// isso, a interface ficava em "cheia" dentro de uma janela normal — barras
+// flutuando sobre a imagem e nenhuma lateral.
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement || !telaCheia) return;
+  telaCheia = false;
+  renderGrid();
+});
+
 // O estado visual do botão é decidido por renderGrid, que é quem sabe se há
 // tela no palco — aqui só se troca a intenção.
 $('fullscreen').addEventListener('click', () => {
   if (activeSlot === null) return;
-  telaCheia = !telaCheia;
-  renderGrid();
+  setTelaCheia(!telaCheia);
 });
 
 window.addEventListener('keydown', (e) => {
@@ -2144,11 +2223,10 @@ window.addEventListener('keydown', (e) => {
     }
   }
 
-  // Esc sai da tela cheia — é o reflexo de todo mundo.
-  if (telaCheia) {
-    telaCheia = false;
-    renderGrid();
-  }
+  // Esc sai da tela cheia — é o reflexo de todo mundo. Quando a tela cheia é a
+  // do navegador ele já a desfaz sozinho e o fullscreenchange nos avisa; este
+  // caminho é o do modo em layout, onde não há quem avise.
+  if (telaCheia) setTelaCheia(false);
 });
 
 /**
