@@ -218,7 +218,6 @@ function renderGrid() {
     grid.hidden = true;
     $('empty').hidden = true;
     $('fullscreen').hidden = true;
-    $('app').classList.remove('cheia', 'ocioso');
     return;
   }
 
@@ -230,7 +229,7 @@ function renderGrid() {
 
   if (!casters.length) {
     activeSlot = null;
-    limparTelaCheia();
+    telaCheia = false;
   } else if (activeSlot === null || !available.has(activeSlot)) {
     // Sempre há uma tela em destaque quando existe transmissão: chegar numa
     // sala com tela no ar e ver só avatares esconderia o que importa.
@@ -245,15 +244,6 @@ function renderGrid() {
   const rotulo = telaCheia ? 'Sair da tela cheia' : 'Tela cheia';
   $('fullscreen').dataset.tip = rotulo;
   $('fullscreen').setAttribute('aria-label', rotulo);
-
-  // Em tela cheia as barras deixam de ocupar lugar e passam a flutuar sobre a
-  // imagem — é a classe no #app que muda esse regime. Ela é posta aqui, antes
-  // de qualquer saída antecipada, senão sair da sala deixa a interface presa no
-  // modo flutuante.
-  $('app').classList.toggle('cheia', noPalco && telaCheia);
-  // Sair da tela cheia com os controles escondidos os deixaria escondidos para
-  // sempre: fora dela nada os traz de volta.
-  acordarControles();
 
   if (!hasPeople) return;
 
@@ -280,12 +270,7 @@ function renderGrid() {
     name: 'Transmitindo',
     broadcasting: true,
   };
-  // O palco vai dentro de uma célula própria porque é ela que dá ao CSS a
-  // medida da altura disponível — ver `.palco-slot`.
-  const cela = document.createElement('div');
-  cela.className = 'palco-slot';
-  cela.append(buildTile(emCena, { palco: true }).el);
-  grid.append(cela);
+  grid.append(buildTile(emCena, { palco: true }).el);
 
   if (telaCheia) return;
 
@@ -373,14 +358,11 @@ function buildTile(p, { palco = false, semVideo = false } = {}) {
   // na altura e sobrava um retângulo preto ocupando metade da área.
   if (palco && stream?.canvas.width) {
     tile.style.aspectRatio = `${stream.canvas.width} / ${stream.canvas.height}`;
-    // A mesma proporção como número: `aspect-ratio` não entra numa conta, e é
-    // de uma conta que sai a largura que cabe nos dois eixos.
-    tile.style.setProperty('--ar', String(stream.canvas.width / stream.canvas.height));
   }
 
   const aoClicar = () => {
-    if (palco) return setTelaCheia(!telaCheia);
-    activeSlot = slot;
+    if (palco) telaCheia = !telaCheia;
+    else activeSlot = slot;
     renderGrid();
   };
 
@@ -1058,7 +1040,7 @@ function limparSala() {
   participants = [];
   lastRoomState = null;
   activeSlot = null;
-  limparTelaCheia();
+  telaCheia = false;
 
   if (roomInfo) remove(`sala:${roomInfo.id}`);
   roomTokens = null;
@@ -1934,155 +1916,30 @@ $('settings').addEventListener('click', () => {
   $('settings').classList.toggle('on', !panel.hidden);
 });
 
-// ------------------------------------------------------------- tela cheia
-
-/**
- * Tela cheia em dois níveis, e os dois valem ao mesmo tempo.
- *
- * O de dentro é o layout: a lateral sai, e as barras deixam de ocupar altura
- * para flutuar sobre a imagem, sumindo sozinhas quando ninguém mexe. É ele que
- * funciona em qualquer lugar — inclusive no iframe da Activity, onde a
- * Permissions Policy pode negar `fullscreen` e a API não faz nada.
- *
- * O de fora é a tela cheia do navegador. Sem ela sobra a janela inteira em
- * volta, e uma imagem 16:9 dentro de uma área que não é 16:9 deixa preto nas
- * laterais por construção — nenhum layout resolve isso de dentro.
- */
-function setTelaCheia(valor) {
-  telaCheia = valor;
-  pedirTelaCheiaNativa(valor);
-  renderGrid();
-  acordarControles();
-}
-
-/** Desliga os dois níveis. Para quem chega por fora do botão: sair da sala, a transmissão acabar. */
-function limparTelaCheia() {
-  telaCheia = false;
-  pedirTelaCheiaNativa(false);
-}
-
-/**
- * A chamada precisa nascer de um gesto — por isso mora no caminho do clique.
- *
- * O que ela não pode é falhar calada: quem vê a barra preta continuar ali
- * conclui que o modo está quebrado, quando o que faltou foi uma permissão.
- */
-function pedirTelaCheiaNativa(entrar) {
-  const alvo = $('app');
-
-  if (!entrar) {
-    const sair = document.exitFullscreen ?? document.webkitExitFullscreen;
-    if (document.fullscreenElement && sair) Promise.resolve(sair.call(document)).catch(() => {});
-    return;
-  }
-
-  if (document.fullscreenElement) return;
-
-  const pedir = alvo.requestFullscreen ?? alvo.webkitRequestFullscreen;
-  if (!pedir) return avisarSemTelaCheia();
-
-  try {
-    Promise.resolve(pedir.call(alvo)).catch(avisarSemTelaCheia);
-  } catch {
-    avisarSemTelaCheia();
-  }
-}
-
-/**
- * Dentro da Activity a recusa é esperada — o iframe do Discord não recebe a
- * permissão `fullscreen`, e ali o modo em layout já é a tela cheia possível.
- * Reclamar seria reclamar de algo que ninguém pode resolver. Fora dela é um
- * bloqueio de verdade, e o F11 é a saída que não dá para adivinhar.
- */
-let avisouTelaCheia = false;
-function avisarSemTelaCheia() {
-  if (inDiscord || avisouTelaCheia) return;
-  avisouTelaCheia = true;
-  toast('O navegador recusou a tela cheia. Aperte F11 para a imagem encostar nas bordas.');
-}
-
-// F11 e o Esc do próprio navegador saem sem passar pelo botão. Sem escutar
-// isso, a interface ficava em "cheia" dentro de uma janela normal — barras
-// flutuando sobre a imagem e nenhuma lateral.
-document.addEventListener('fullscreenchange', () => {
-  if (document.fullscreenElement || !telaCheia) return;
-  telaCheia = false;
-  renderGrid();
-});
-
-/**
- * Controles que somem sozinhos, e só em tela cheia.
- *
- * Fora dela as barras ocupam lugar no layout e não obstruem nada, então não há
- * o que esconder. Dentro dela estão por cima da imagem, e aí o sumiço é o que
- * separa "tela cheia" de "tela cheia com uma barra na frente".
- */
-const OCIO_MS = 2500;
-let ocioTimer = null;
-let sobreControles = false;
-
-function esconderControles() {
-  // Mirar um botão é mexer: some só quem não está sendo usado. E com um modal
-  // aberto o cursor está lá dentro, não sobre a barra — esconder o que ficou
-  // atrás dele seria escondê-lo no meio de uma tarefa.
-  if (!telaCheia || sobreControles || modalAberto()) return;
-  $('app').classList.add('ocioso');
-}
-
-/** @param {boolean} recontar false enquanto o cursor está parado sobre os controles. */
-function acordarControles(recontar = true) {
-  clearTimeout(ocioTimer);
-  ocioTimer = null;
-  $('app').classList.remove('ocioso');
-  if (recontar && telaCheia) ocioTimer = setTimeout(esconderControles, OCIO_MS);
-}
-
-for (const evento of ['pointermove', 'pointerdown', 'wheel', 'keydown']) {
-  window.addEventListener(evento, () => telaCheia && acordarControles(), { passive: true });
-}
-
-// Cursor fora da janela não está mirando nada aqui dentro: some na hora, sem
-// esperar o cronômetro.
-document.documentElement.addEventListener('pointerleave', () => {
-  if (telaCheia) esconderControles();
-});
-
-for (const barra of document.querySelectorAll('.topbar, .bottombar')) {
-  barra.addEventListener('pointerenter', () => {
-    sobreControles = true;
-    acordarControles(false);
-  });
-  barra.addEventListener('pointerleave', () => {
-    sobreControles = false;
-    acordarControles();
-  });
-}
-
 // O estado visual do botão é decidido por renderGrid, que é quem sabe se há
 // tela no palco — aqui só se troca a intenção.
 $('fullscreen').addEventListener('click', () => {
   if (activeSlot === null) return;
-  setTelaCheia(!telaCheia);
+  telaCheia = !telaCheia;
+  renderGrid();
 });
-
-const MODAIS = ['profileModal', 'roomModal', 'joinModal', 'createModal', 'modal'];
-const modalAberto = () => MODAIS.some((id) => !$(id).hidden);
 
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
 
   // Fecha o modal aberto mais recente antes de mexer no modo ampliado.
-  for (const id of MODAIS) {
+  for (const id of ['profileModal', 'roomModal', 'joinModal', 'createModal', 'modal']) {
     if (!$(id).hidden) {
       $(id).hidden = true;
       return;
     }
   }
 
-  // Esc sai da tela cheia — é o reflexo de todo mundo. Quando a tela cheia é a
-  // do navegador ele já a desfaz sozinho e o fullscreenchange nos avisa; este
-  // caminho é o do modo em layout, onde não há quem avise.
-  if (telaCheia) setTelaCheia(false);
+  // Esc sai da tela cheia — é o reflexo de todo mundo.
+  if (telaCheia) {
+    telaCheia = false;
+    renderGrid();
+  }
 });
 
 /**
